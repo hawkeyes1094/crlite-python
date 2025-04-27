@@ -1,0 +1,15 @@
+[package]
+name = "rs_crlite"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "rs_crlite"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.24.0"
+clubcard = "0.3"
+clubcard-crlite = "0.3"
+bincode = "1.3"
