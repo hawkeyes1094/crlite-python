@@ -382,6 +382,9 @@ def load_crlite_db(db_dir: Union[str, Path], update: bool = True, channel: CRLit
 	elif not isinstance(db_dir, Path):
 		raise TypeError("db_dir must be a string or a pathlib.Path object.")
 
+	if not os.path.isdir(db_dir):
+		raise FileNotFoundError(f"No such directory: {db_dir}")
+
 	if not isinstance(channel, CRLiteFilterChannel):
 		raise TypeError("channel must be an Enum of type crlite_python.CRLiteFilterChannel.")
 	if channel == CRLiteFilterChannel.ExpermentalDeltas:
@@ -392,36 +395,4 @@ def load_crlite_db(db_dir: Union[str, Path], update: bool = True, channel: CRLit
 
 	return CRLiteDB.load(db_dir=db_dir)
 
-
-def main():
-
-	logger = logging.getLogger()
-	logger.setLevel(logging.DEBUG)
-	logger_handler = logging.StreamHandler(sys.stdout)
-	logger_handler.setLevel(logging.DEBUG)
-	logger_handler.setFormatter(logging.Formatter('%(name)s - %(levelname)s - %(message)s'))
-	logger.addHandler(logger_handler)
-
-	db_dir = Path('/home/juluruteja/crlite_testing/crlite_db/')
-	# _update_db(db_dir, PROD_ATTACH_URL, PROD_URL, CRLiteFilterChannel.Default)
-	db = load_crlite_db(db_dir, update = True)
-	# db = CRLiteDB.load(db_dir)
-
-	# revoked_cert_pem = ssl.get_server_certificate(('revoked.badssl.com', 443))
-	# valid_cert_pem = ssl.get_server_certificate(('rit.edu', 443))
-	# revoked_cert_x509 = x509.load_pem_x509_certificate(revoked_cert_pem.encode())
-	# valid_cert_x509 = x509.load_pem_x509_certificate(valid_cert_pem.encode())
-	# valid_cert_der = valid_cert_x509.public_bytes(serialization.Encoding.DER)
-	# revoked_cert_der = revoked_cert_x509.public_bytes(serialization.Encoding.DER)
-	# print(db.check_revocation_x509(revoked_cert_x509))
-	# print(db.check_revocation_x509(valid_cert_x509))
-	# print(db.check_revocation_x509_pem(revoked_cert_pem.encode()))
-	# print(db.check_revocation_x509_pem(valid_cert_pem.encode()))
-	# print(db.check_revocation_x509_der(revoked_cert_der))
-	# print(db.check_revocation_x509_der(valid_cert_der))
-
-	new_cert_pem = ssl.get_server_certificate(('revoked.badssl.com', 443)).encode()
-	print(db.check_revocation_x509_pem(new_cert_pem))
-if __name__ == '__main__':
-	main()
 
