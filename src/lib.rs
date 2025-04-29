@@ -10,7 +10,7 @@ mod exceptions {
     pyo3::import_exception!(exceptions, CRLiteDBError);
 }
 
-#[pyclass(module = "rs_crlite", get_all)]
+#[pyclass(module = "crlite_python_rs", get_all)]
 pub struct Intermediates {
     intermediates: HashMap<IssuerDN, Vec<DERCert>>,
 }
@@ -51,7 +51,7 @@ impl Intermediates {
 }
 
 // Wrap the CRLiteStatus enum for Python
-#[pyclass(module = "rs_crlite", eq, eq_int)]
+#[pyclass(module = "crlite_python_rs", eq, eq_int)]
 // #[pyclass(eq, eq_int)]
 #[derive(PartialEq)]
 pub enum PyCRLiteStatus {
@@ -73,7 +73,7 @@ impl From<CRLiteStatus> for PyCRLiteStatus {
     }
 }
 
-#[pyclass(module = "rs_crlite")]
+#[pyclass(module = "crlite_python_rs")]
 pub struct PyCRLiteClubcard {
     clubcard: CRLiteClubcard,
 }
@@ -148,7 +148,8 @@ impl PyCRLiteClubcard {
 
 
 #[pymodule]
-fn rs_crlite(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name="_internal")]
+fn crlite_python_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCRLiteStatus>()?;
     m.add_class::<Intermediates>()?;
     m.add_class::<PyCRLiteClubcard>()?;

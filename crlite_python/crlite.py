@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import binascii
 import csv
 import hashlib
@@ -10,16 +8,16 @@ import ssl
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from urllib.parse import urljoin
 from datetime import datetime, timezone
 
-from exceptions import *
+from crlite_python.exceptions import *
 import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
-import rs_crlite
+from crlite_python._internal import Intermediates as RustIntermediates, PyCRLiteClubcard, PyCRLiteStatus
 
 OID_SCT_EXTENSION = "1.3.6.1.4.1.11129.2.4.2"
 
@@ -41,6 +39,9 @@ class Status(Enum):
 	REVOKED = "Revoked"
 
 class CRLiteFilterChannel(Enum):
+	"""Defines the CRlite revocation information channel.
+	Only Default and Compat are enabled currently.
+	"""
 	ExpermentalDeltas = "experimental+deltas"
 	Default = "default"
 	Compat = "compat"
@@ -83,7 +84,7 @@ class CertRevRecordAttachment:
 		return CertRevRecordAttachment(hash, filename, location)
 
 
-def update_intermediates(db_dir: Path) -> None:
+def _update_intermediates(db_dir: Path) -> None:
 	intermediates_path = db_dir / "crlite.intermediates"
 	logging.info(f"Fetching {ICA_LIST_URL}")
 	try:
@@ -110,12 +111,10 @@ class Intermediates:
 	# def __init__(self, intermediates: Dict[bytes, List[bytes]]):
 	# 	self.intermediates = intermediates
 	def __new__(self):
-		instance = rs_crlite.Intermediates()
-		self.intermediates = instance
-		return instance
+		return RustIntermediates()
 
 	@staticmethod
-	def from_ccadb_csv(bytes_data: bytes) -> 'rs_crlite.Intermediates':
+	def from_ccadb_csv(bytes_data: bytes) -> 'RustIntermediates':
 		inter_obj = Intermediates()
 		text = bytes_data.decode('utf-8', errors='ignore')
 		reader = csv.reader(text)
@@ -133,12 +132,9 @@ class Intermediates:
 		return inter_obj
 
 	@staticmethod
-	def decode(bytes_data: bytes) -> 'rs_crlite.Intermediates':
-		return rs_crlite.Intermediates.from_bincode(bytes_data)
+	def decode(bytes_data: bytes) -> 'RustIntermediates':
+		return RustIntermediates.from_bincode(bytes_data)
 
-	# not used
-	def encode(self) -> bytes:
-		return self.intermediates.to_bincode()
 
 
 	def lookup_issuer_spki(self, cert: x509.Certificate) -> Optional[bytes]:
@@ -167,26 +163,26 @@ class Intermediates:
 		return None
 
 class Filter:
-	def __init__(self, filter_obj: Optional['rs_crlite.PyCRLiteClubcard']):
+	def __init__(self, filter_obj: Optional['PyCRLiteClubcard']):
 		self.filter = filter_obj
 		# test = rs_crlite.PyCR
 
 	@staticmethod
 	def from_bytes(bytes_data: bytes) -> 'Filter':
 		try:
-			clubcard = rs_crlite.PyCRLiteClubcard.load_filter(bytes_data)
+			clubcard = PyCRLiteClubcard.load_filter(bytes_data)
 			return Filter(clubcard)
 		except Exception as e:
 			raise CRLiteDBError(f"Could not load filter: {e}")
 
-	def has(self, issuer_spki_hash: bytes, serial: bytes, timestamps: List[Tuple[bytes, int]]) -> 'rs_crlite.PyCRLiteStatus':
-		status = rs_crlite.PyCRLiteStatus.NotCovered
+	def has(self, issuer_spki_hash: bytes, serial: bytes, timestamps: List[Tuple[bytes, int]]) -> 'PyCRLiteStatus':
+		status = PyCRLiteStatus.NotCovered
 		if self.filter:
 			status = self.filter.query_filter(self.filter, issuer_spki_hash, serial, timestamps)
 		return status
 
 
-def update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLiteFilterChannel') -> None:
+def _update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLiteFilterChannel') -> None:
 	logging.info(f"Fetching cert-revocations records from remote settings {base_url}")
 	try:
 		response = requests.get(urljoin(base_url, "cert-revocations/records"))
@@ -251,7 +247,10 @@ def update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLite
 
 
 class CRLiteDB:
-	def __init__(self, filters: List[Filter], intermediates: Intermediates):
+	"""CRLite Database contains the Clubcard filters and Intermediates certificate info
+	"""
+	def __init__(self, db_dir: Path, filters: List[Filter], intermediates: Intermediates):
+		self.db_dir = db_dir
 		self.filters = filters
 		self.intermediates = intermediates
 
@@ -273,7 +272,7 @@ class CRLiteDB:
 
 		intermediates_path = db_dir / "crlite.intermediates"
 		if not intermediates_path.exists():
-			update_intermediates(db_dir)
+			_update_intermediates(db_dir)
 
 		try:
 			with open(intermediates_path, "rb") as f:
@@ -282,11 +281,32 @@ class CRLiteDB:
 		except Exception as e:
 			raise CRLiteDBError(f"Error loading intermediates: {e}")
 
-		return CRLiteDB(filters, intermediates)
+		return CRLiteDB(db_dir, filters, intermediates)
 
-	def query(self, cert_bytes: bytes) -> Status:
+	def check_revocation_x509(self, cert: x509) -> Status:
+		if isinstance(cert, x509.Certificate):
+			return self.__query(cert)
+		else:
+			raise ValueError("Certificate is not of the type x509.Certificate")
+
+
+	def check_revocation_x509_pem(self, cert_pem_data: bytes) -> Status:
+		if isinstance(cert_pem_data, bytes):
+			return self.__query(x509.load_pem_x509_certificate(cert_pem_data))
+		else:
+			raise ValueError("Certificate is not a valid byte array")
+
+
+	def check_revocation_x509_der(self, cert_der_data: bytes) -> Status:
+		if isinstance(cert_der_data, bytes):
+			return self.__query(x509.load_der_x509_certificate(cert_der_data))
+		else:
+			raise ValueError("Certificate is not a valid byte array")
+
+
+	# Modify
+	def __query(self, cert: x509.Certificate) -> Status:
 		try:
-			cert = x509.load_der_x509_certificate(cert_bytes)
 
 			# According to the TLS BR Subscriber certificate profile, serial numbers range from 0 to 2^159.
 			# This needs atleast 160 bits, or 20 bytes. Keeping 24 bytes to avoid unexpected OverflowError
@@ -307,16 +327,16 @@ class CRLiteDB:
 
 			maybe_good = False
 			covered = False
-			timestamps = get_sct_ids_and_timestamps(cert)
+			timestamps = _get_sct_ids_and_timestamps(cert)
 
 			if issuer_spki_hash:
 				for filter in self.filters:
 					status = filter.has(issuer_spki_hash, serial, timestamps)
-					if status == rs_crlite.PyCRLiteStatus.Revoked:
+					if status == PyCRLiteStatus.Revoked:
 						return Status.REVOKED
-					elif status == rs_crlite.PyCRLiteStatus.Good:
+					elif status == PyCRLiteStatus.Good:
 						maybe_good = True
-					elif status == rs_crlite.PyCRLiteStatus.NotEnrolled:
+					elif status == PyCRLiteStatus.NotEnrolled:
 						covered = True
 
 			if maybe_good:
@@ -326,11 +346,10 @@ class CRLiteDB:
 			return Status.NOT_COVERED
 
 		except Exception as e:
-			logging.warning(f"Error querying certificate: {e}")
-			return Status.NOT_COVERED
+			raise CRLiteDBError(f"Error querying certificate: {e}")
 
 
-def get_sct_ids_and_timestamps(cert: x509.Certificate) -> List[Tuple[bytes, int]]:
+def _get_sct_ids_and_timestamps(cert: x509.Certificate) -> List[Tuple[bytes, int]]:
 	try:
 		# cert = x509.load_der_x509_certificate(cert_bytes)
 		sct_extension = cert.extensions.get_extension_for_oid(x509.ObjectIdentifier(OID_SCT_EXTENSION))
@@ -355,6 +374,25 @@ def get_sct_ids_and_timestamps(cert: x509.Certificate) -> List[Tuple[bytes, int]
 		return []
 
 
+def load_crlite_db(db_dir: Union[str, Path], update: bool = True, channel: CRLiteFilterChannel = CRLiteFilterChannel.Default) -> CRLiteDB:
+	"""Loads CRLite filters from a directory. If update is set to True, also updates the filter files"""
+
+	if isinstance(db_dir, str):
+		db_dir = Path(db_dir)
+	elif not isinstance(db_dir, Path):
+		raise TypeError("db_dir must be a string or a pathlib.Path object.")
+
+	if not isinstance(channel, CRLiteFilterChannel):
+		raise TypeError("channel must be an Enum of type crlite_python.CRLiteFilterChannel.")
+	if channel == CRLiteFilterChannel.ExpermentalDeltas:
+		raise CRLiteDBError("Experiemental Deltas are unsupported")
+
+	if update:
+		_update_db(db_dir=db_dir, attachment_url=PROD_ATTACH_URL, base_url=PROD_URL, channel=channel)
+
+	return CRLiteDB.load(db_dir=db_dir)
+
+
 def main():
 
 	logger = logging.getLogger()
@@ -365,18 +403,25 @@ def main():
 	logger.addHandler(logger_handler)
 
 	db_dir = Path('/home/juluruteja/crlite_testing/crlite_db/')
-	update_db(db_dir, PROD_ATTACH_URL, PROD_URL, CRLiteFilterChannel.Default)
-	# update_intermediates(db_dir)
-	db = CRLiteDB.load(db_dir)
+	# _update_db(db_dir, PROD_ATTACH_URL, PROD_URL, CRLiteFilterChannel.Default)
+	db = load_crlite_db(db_dir, update = True)
+	# db = CRLiteDB.load(db_dir)
 
-	revoked_cert_pem = ssl.get_server_certificate(('revoked.badssl.com', 443))
-	valid_cert_pem = ssl.get_server_certificate(('rit.edu', 443))
-	revoked_cert = x509.load_pem_x509_certificate(revoked_cert_pem.encode())
-	valid_cert = x509.load_pem_x509_certificate(valid_cert_pem.encode())
-	valid_cert = valid_cert.public_bytes(serialization.Encoding.DER)
-	revoked_cert = revoked_cert.public_bytes(serialization.Encoding.DER)
-	print(db.query(revoked_cert), db.query(valid_cert))
+	# revoked_cert_pem = ssl.get_server_certificate(('revoked.badssl.com', 443))
+	# valid_cert_pem = ssl.get_server_certificate(('rit.edu', 443))
+	# revoked_cert_x509 = x509.load_pem_x509_certificate(revoked_cert_pem.encode())
+	# valid_cert_x509 = x509.load_pem_x509_certificate(valid_cert_pem.encode())
+	# valid_cert_der = valid_cert_x509.public_bytes(serialization.Encoding.DER)
+	# revoked_cert_der = revoked_cert_x509.public_bytes(serialization.Encoding.DER)
+	# print(db.check_revocation_x509(revoked_cert_x509))
+	# print(db.check_revocation_x509(valid_cert_x509))
+	# print(db.check_revocation_x509_pem(revoked_cert_pem.encode()))
+	# print(db.check_revocation_x509_pem(valid_cert_pem.encode()))
+	# print(db.check_revocation_x509_der(revoked_cert_der))
+	# print(db.check_revocation_x509_der(valid_cert_der))
 
+	new_cert_pem = ssl.get_server_certificate(('revoked.badssl.com', 443)).encode()
+	print(db.check_revocation_x509_pem(new_cert_pem))
 if __name__ == '__main__':
 	main()
 
