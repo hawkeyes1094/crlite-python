@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-version = "0.2.0"
+version = "0.2.1"
 
 [project.urls]
 repository = "https://github.com/hawkeyes1094/crlite-python"
@@ -27,6 +27,6 @@ tests = [
 ]
 
 [tool.maturin]
-python-source = "crlite_python"
-module-name = "._internal"
+python-source = "python"
+module-name = "crlite_python._internal"
 features = ["pyo3/extension-module"]
