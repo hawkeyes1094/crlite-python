@@ -16,7 +16,11 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-version = "0.2.1"
+version = "0.2.3"
+dependencies = [
+    "cryptography>=44.0.2",
+    "requests>=2.32.3"
+]
 
 [project.urls]
 repository = "https://github.com/hawkeyes1094/crlite-python"
