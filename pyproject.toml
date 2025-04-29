@@ -17,5 +17,5 @@ tests = [
 ]
 [tool.maturin]
 python-source = "crlite_python"
-module-name = "crlite_python._internal"
+module-name = "._internal"
 features = ["pyo3/extension-module"]

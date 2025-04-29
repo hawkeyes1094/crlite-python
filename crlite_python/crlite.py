@@ -5,19 +5,19 @@ import logging
 import sys
 import os
 import ssl
+import requests
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 from urllib.parse import urljoin
 from datetime import datetime, timezone
-
-from crlite_python.exceptions import *
-import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
-from crlite_python._internal import Intermediates as RustIntermediates, PyCRLiteClubcard, PyCRLiteStatus
+from ._internal import Intermediates as RustIntermediates, PyCRLiteClubcard, PyCRLiteStatus
+from crlite_python.exceptions import *
+
 
 OID_SCT_EXTENSION = "1.3.6.1.4.1.11129.2.4.2"
 
