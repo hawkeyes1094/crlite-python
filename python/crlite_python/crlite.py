@@ -18,6 +18,7 @@ from cryptography.exceptions import InvalidSignature
 from ._internal import Intermediates as RustIntermediates, PyCRLiteClubcard, PyCRLiteStatus
 from crlite_python.exceptions import *
 
+logger = logging.getLogger(__name__)
 
 OID_SCT_EXTENSION = "1.3.6.1.4.1.11129.2.4.2"
 
@@ -86,7 +87,7 @@ class CertRevRecordAttachment:
 
 def _update_intermediates(db_dir: Path) -> None:
 	intermediates_path = db_dir / "crlite.intermediates"
-	logging.info(f"Fetching {ICA_LIST_URL}")
+	logger.info(f"Fetching {ICA_LIST_URL}")
 	try:
 		response = requests.get(ICA_LIST_URL)
 		response.raise_for_status()
@@ -128,7 +129,7 @@ class Intermediates:
 					if issuer_dn not in inter_obj.intermediates:
 						inter_obj.add_cert(issuer_dn, der_cert)
 				except Exception as e:
-					logging.warning(f"Error processing CCADB record: {e}")
+					logger.warning(f"Error processing CCADB record: {e}")
 		return inter_obj
 
 	@staticmethod
@@ -153,13 +154,13 @@ class Intermediates:
 						return issuer_spki.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
 
 					except (TypeError, InvalidSignature) as e:
-						logging.debug(f"Issue validating signature: {e}")
+						logger.debug(f"Issue validating signature: {e}")
 						pass
 
 					except Exception as e:
-						logging.warning(f"Error parsing intermediate certificate: {e}")
+						logger.warning(f"Error parsing intermediate certificate: {e}")
 		except Exception as e:
-			logging.warning(f"Error parsing target certificate: {e}")
+			logger.warning(f"Error parsing target certificate: {e}")
 		return None
 
 class Filter:
@@ -183,7 +184,7 @@ class Filter:
 
 
 def _update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLiteFilterChannel') -> None:
-	logging.info(f"Fetching cert-revocations records from remote settings {base_url}")
+	logger.info(f"Fetching cert-revocations records from remote settings {base_url}")
 	try:
 		response = requests.get(urljoin(base_url, "cert-revocations/records"))
 		response.raise_for_status()
@@ -206,11 +207,11 @@ def _update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLit
 		if entry_path.is_file():
 			extension = entry_path.suffix[1:]
 			if (extension == "delta" or extension == "filter") and entry not in expected_filenames:
-				logging.info(f"Removing {entry}")
+				logger.info(f"Removing {entry}")
 				try:
 					os.remove(entry_path)
 				except OSError as e:
-					logging.warning(f"Could not remove {entry}: {e}")
+					logger.warning(f"Could not remove {entry}: {e}")
 
 	for filter_record in filters:
 		expected_digest = binascii.unhexlify(filter_record.attachment.hash)
@@ -221,13 +222,13 @@ def _update_db(db_dir: Path, attachment_url: str, base_url: str, channel: 'CRLit
 					content = f.read()
 				digest = hashlib.sha256(content).digest()
 				if expected_digest == digest:
-					logging.info(f"Found existing copy of {filter_record.attachment.filename}")
+					logger.info(f"Found existing copy of {filter_record.attachment.filename}")
 					continue
 			except OSError as e:
-				logging.warning(f"Error reading existing filter {path}: {e}")
+				logger.warning(f"Error reading existing filter {path}: {e}")
 
 		filter_url = urljoin(attachment_url, filter_record.attachment.location)
-		logging.info(f"Fetching {filter_record.attachment.filename} from {filter_url}")
+		logger.info(f"Fetching {filter_record.attachment.filename} from {filter_url}")
 		try:
 			response = requests.get(filter_url)
 			response.raise_for_status()
@@ -268,7 +269,7 @@ class CRLiteDB:
 							filter_bytes = f.read()
 						filters.append(Filter.from_bytes(filter_bytes))
 					except Exception as e:
-						logging.warning(f"Error loading filter {entry_path}: {e}")
+						logger.warning(f"Error loading filter {entry_path}: {e}")
 
 		intermediates_path = db_dir / "crlite.intermediates"
 		if not intermediates_path.exists():
@@ -311,14 +312,19 @@ class CRLiteDB:
 			# According to the TLS BR Subscriber certificate profile, serial numbers range from 0 to 2^159.
 			# This needs atleast 160 bits, or 20 bytes. Keeping 24 bytes to avoid unexpected OverflowError
 			serial = cert.serial_number.to_bytes(length=24, byteorder='big').lstrip(b'\x00') # Simulate raw serial
+			logger.debug(f"Serial number: {binascii.hexlify(serial).decode()}")
+			logger.debug(f"Subject name: {cert.subject.rfc4514_string()}")
+			logger.debug(f"Certificate valid from: {cert.not_valid_before_utc.strftime('%Y/%m/%d %H:%M:%S UTC')}")
+			logger.debug(f"Certificate valid until: {cert.not_valid_after_utc.strftime('%Y/%m/%d %H:%M:%S UTC')}")
+
 			issuer_dn_bytes = cert.issuer.public_bytes(serialization.Encoding.DER)
 			issuer_spki_bytes = Intermediates.lookup_issuer_spki(self.intermediates, cert)
 
-			logging.debug(f"Issuer DN: {binascii.hexlify(issuer_dn_bytes).decode()}")
-			logging.debug(f"Serial number: {binascii.hexlify(serial).decode()}")
+			logger.debug(f"Issuer DN: {cert.issuer.rfc4514_string()}")
+			logger.debug(f"Issuer DN hash: {binascii.hexlify(issuer_dn_bytes).decode()}")
 			if issuer_spki_bytes:
 				issuer_spki_hash = hashlib.sha256(issuer_spki_bytes).digest()
-				logging.debug(f"Issuer SPKI hash: {binascii.hexlify(issuer_spki_hash).decode()}")
+				logger.debug(f"Issuer SPKI hash: {binascii.hexlify(issuer_spki_hash).decode()}")
 			else:
 				return Status.NOT_ENROLLED
 
@@ -370,7 +376,7 @@ def _get_sct_ids_and_timestamps(cert: x509.Certificate) -> List[Tuple[bytes, int
 			return []
 
 	except Exception as e:
-		logging.warning(f"Error parsing certificate for SCTs: {e}")
+		logger.warning(f"Error parsing certificate for SCTs: {e}")
 		return []
 
 
